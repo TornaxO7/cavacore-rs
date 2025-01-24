@@ -26,8 +26,17 @@
             let
               rust-toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
             in
-            pkgs.mkShell {
+            pkgs.mkShell rec {
               packages = [ rust-toolchain ];
+
+              buildInputs = with pkgs; [
+                fftw
+                libclang
+              ];
+
+              shellHook = ''
+                export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${lib.makeLibraryPath buildInputs}
+              '';
             };
         };
       };

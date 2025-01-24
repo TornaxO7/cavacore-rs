@@ -1,0 +1,3 @@
+[submodule "cava"]
+	path = cava
+	url = git@github.com:karlstav/cava.git
