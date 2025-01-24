@@ -22,21 +22,14 @@
             ];
           };
 
+          # packages.default = pkgs.callPackage (import ./nix/package.nix) { };
+
           devShells.default =
             let
               rust-toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
             in
-            pkgs.mkShell rec {
-              packages = [ rust-toolchain ];
-
-              buildInputs = with pkgs; [
-                fftw
-                libclang
-              ];
-
-              shellHook = ''
-                export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${lib.makeLibraryPath buildInputs}
-              '';
+            pkgs.mkShell {
+              packages = with pkgs; [ libclang fftw ] ++ [ rust-toolchain ];
             };
         };
       };
