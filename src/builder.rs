@@ -1,17 +1,10 @@
-use error::Error;
-
-mod bindings;
-mod error;
-mod wrapper;
-
 use std::ops::Range;
 
-pub use wrapper::Cava;
+use crate::Cava;
 
 pub type Hz = u32;
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy)]
 pub enum Channel {
     Mono,
     Stereo,
@@ -28,16 +21,16 @@ pub struct Builder {
 }
 
 impl Builder {
-    pub fn build(&self) -> Result<Cava, Error> {
+    pub fn build(&self) -> Cava {
         let plan = unsafe {
             bindings::cava_init(
-                self.amount_bars as i32,
-                self.sample_rate,
-                self.channel as std::os::raw::c_int,
-                self.enable_autosens as i32,
-                self.noise_reduction,
-                self.freq_range.start as i32,
-                self.freq_range.end as i32,
+                number_of_bars as i32,
+                sample_rate,
+                channel as std::os::raw::c_int,
+                opts.enable_autosens as i32,
+                opts.noise_reduction,
+                opts.freq_range.start as i32,
+                opts.freq_range.end as i32,
             )
         };
 
@@ -56,9 +49,11 @@ impl Builder {
             let err_msg = String::from_utf8(err_msg_bytes).unwrap();
 
             return Err(Error::Init(err_msg));
+        } else {
+            unreachable!("Invalid cava status was set: {}", unsafe { *plan }.status);
         }
 
-        Ok(Cava::new(plan))
+        Ok(Cava { plan })
     }
 }
 

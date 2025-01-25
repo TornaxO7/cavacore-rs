@@ -3,10 +3,12 @@
 , llvmPackages
 , stdenv
 , lib
+, rust-bin
 , ...
 }:
 let
   cargoToml = builtins.fromTOML (builtins.readFile ../Cargo.toml);
+  rust-toolchain = rust-bin.fromRustupToolchainFile ../rust-toolchain.toml;
 in
 rustPlatform.buildRustPackage {
   pname = cargoToml.package.name;
@@ -22,6 +24,7 @@ rustPlatform.buildRustPackage {
 
   nativeBuildInputs = [
     llvmPackages.clang
+    rust-toolchain
   ];
 
   cargoLock.lockFile = ../Cargo.lock;

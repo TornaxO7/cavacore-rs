@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf};
+use std::{fs::File, io::Write, path::PathBuf};
 
 fn main() {
     cc::Build::new()
@@ -12,14 +12,24 @@ fn main() {
     let header_path = cava_dir.join("cavacore.h");
     let header_path_str = header_path.to_str().expect("Get path to header as string");
 
+    println!(
+        "cargo:rustc-link-search={}",
+        std::env::var("OUT_DIR").unwrap()
+    );
+    println!("cargo:rustc-link-lib=cavacore");
+
     let bindings = bindgen::Builder::default()
         .header(header_path_str)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate()
         .expect("Generate bindings");
 
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("bindings.rs");
+    let out_path = PathBuf::from("./src").join("bindings.rs");
+    let mut bindings_file = Box::new(File::create(out_path).unwrap());
+
+    bindings_file.write(b"#![allow(warnings)]\n").unwrap();
+
     bindings
-        .write_to_file(out_path)
+        .write(bindings_file)
         .expect("Couldn't write bindings!");
 }
