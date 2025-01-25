@@ -1,7 +1,5 @@
 { rustPlatform
-, glibc
 , fftw
-, libclang
 , llvmPackages
 , stdenv
 , lib
@@ -20,8 +18,6 @@ rustPlatform.buildRustPackage {
 
   buildInputs = [
     fftw
-    libclang
-    glibc
   ];
 
   nativeBuildInputs = [
