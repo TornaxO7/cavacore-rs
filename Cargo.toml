@@ -8,4 +8,4 @@ thiserror = "2"
 
 [build-dependencies]
 cc = "1"
-cbindgen = "0"
+bindgen = "0"

@@ -1,4 +1,7 @@
 { rustPlatform
+, glibc
+, fftw
+, libclang
 , llvmPackages
 , stdenv
 , lib
@@ -7,15 +10,30 @@
 let
   cargoToml = builtins.fromTOML (builtins.readFile ../Cargo.toml);
 in
-rustPlatform.buildRustPackage rec {
+rustPlatform.buildRustPackage {
   pname = cargoToml.package.name;
   version = cargoToml.package.version;
-
-  LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
 
   src = builtins.path {
     path = ../.;
   };
+
+  buildInputs = [
+    fftw
+    libclang
+    glibc
+  ];
+
+  nativeBuildInputs = [
+    llvmPackages.clang
+  ];
+
+  cargoLock.lockFile = ../Cargo.lock;
+
+  # wtf?
+  # https://slightknack.dev/blog/nix-os-bindgen/
+
+  LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
 
   configurePhase = ''
     BINDGEN_CFLAGS="$(< ${stdenv.cc}/nix-support/libc-crt1-cflags) \
@@ -28,6 +46,4 @@ rustPlatform.buildRustPackage rec {
     export OUT=${placeholder "out"}
     echo $OUT
   '';
-
-  cargoLock.lockFile = ../Cargo.lock;
 }
