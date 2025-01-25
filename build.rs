@@ -3,6 +3,7 @@ use std::{fs::File, io::Write, path::PathBuf};
 fn main() {
     cc::Build::new()
         .file("./cava/cavacore.c")
+        .static_flag(true)
         .compile("cavacore");
 
     let cava_dir = PathBuf::from("./cava")

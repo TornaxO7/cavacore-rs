@@ -18,21 +18,21 @@ rustPlatform.buildRustPackage {
     path = ../.;
   };
 
-  buildInputs = [
-    fftw
-  ];
-
   nativeBuildInputs = [
     llvmPackages.clang
     rust-toolchain
+    fftw
   ];
 
   cargoLock.lockFile = ../Cargo.lock;
 
+  LD_LIBRARY_PATH = lib.makeLibraryPath [
+    fftw
+  ];
+
   # wtf?
   # https://slightknack.dev/blog/nix-os-bindgen/
-
-  LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
+  LIBCLANG_PATH = lib.makeLibraryPath [ llvmPackages.libclang.lib ];
 
   configurePhase = ''
     BINDGEN_CFLAGS="$(< ${stdenv.cc}/nix-support/libc-crt1-cflags) \
