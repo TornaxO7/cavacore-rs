@@ -58,7 +58,7 @@ impl Builder {
             return Err(Error::Init(err_msg));
         }
 
-        Ok(Cava::new(plan))
+        Ok(unsafe { Cava::new(plan) })
     }
 }
 
