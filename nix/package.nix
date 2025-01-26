@@ -20,16 +20,14 @@ rustPlatform.buildRustPackage {
     path = ../.;
   };
 
-  # packages for devshell
-  buildInputs = [
-    cargo-release
-    just
-  ];
-
   nativeBuildInputs = [
     llvmPackages.clang
-    rust-toolchain
     fftw
+
+    # devshell packages
+    rust-toolchain
+    cargo-release
+    just
   ];
 
   cargoLock.lockFile = ../Cargo.lock;
