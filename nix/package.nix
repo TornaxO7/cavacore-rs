@@ -4,6 +4,7 @@
 , stdenv
 , lib
 , rust-bin
+, cargo-release
 , ...
 }:
 let
@@ -17,6 +18,10 @@ rustPlatform.buildRustPackage {
   src = builtins.path {
     path = ../.;
   };
+
+  buildInputs = [
+    cargo-release
+  ];
 
   nativeBuildInputs = [
     llvmPackages.clang
