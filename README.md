@@ -1,9 +1,37 @@
-# rust-template
-A template if I want to create a new rust project.
+# Cava-rs
 
-What it includes:
-- Default nix flake with devShell.
-- Stable toolchain
-- default code formatting
-- CI setup
-- dependabot setup
+A safe wrapper for [cavacore].
+
+# Required dependencies
+
+- `fftw3`
+
+# Example
+
+```rs
+use cava_rs::{Builder, Cava, Channel};
+
+fn main() {
+    // Configure cava with the builder first...
+    let builder = Builder {
+        // we will only listen to one channel
+        channel: Channel::Mono,
+        .. Builder::default()
+    };
+
+    let mut cava = builder.build().expect("Build cava");
+
+    // feed cava with some samples
+    let mut new_samples: [f64; 3] = [1., 2., 3.];
+
+    // and let it give you the bars back
+    let bars = cava.execute(&mut new_samples);
+}
+```
+
+# Dependencies
+
+You have install [fftw] on your destination system to use this crate since [cavacore] relies on it.
+
+[cavacore]: https://github.com/karlstav/cava/blob/master/CAVACORE.md
+[fftw]: http://www.fftw.org/

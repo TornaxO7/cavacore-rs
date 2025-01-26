@@ -1,5 +1,7 @@
 use crate::bindings;
 
+/// The wrapper of `cavacore`.
+/// Can be created by using [`Builder`].
 #[derive(Debug)]
 pub struct Cava {
     plan: *mut bindings::cava_plan,
@@ -8,7 +10,7 @@ pub struct Cava {
 }
 
 impl Cava {
-    /// Safety: `plan` must point to a valid cava plan
+    // SAFETY: `plan` must point to a valid cava plan
     pub(crate) unsafe fn new(plan: *mut bindings::cava_plan) -> Self {
         debug_assert!(!plan.is_null());
 
@@ -21,6 +23,20 @@ impl Cava {
         Self { plan, out_buffer }
     }
 
+    /// Execute the visualisation by providing some new samples of the source audio and
+    /// return the values of the bars back.
+    ///
+    /// # Example
+    /// ```rust
+    /// use cava_rs::{Builder, Cava};
+    ///
+    /// let builder = Builder::default();
+    ///
+    /// let mut cava = builder.build().unwrap();
+    ///
+    /// // there can be also no new samples coming from the source
+    /// cava.execute(&mut []);
+    /// ```
     pub fn execute(&mut self, new_samples: &mut [f64]) -> &[f64] {
         unsafe {
             bindings::cava_execute(

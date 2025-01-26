@@ -29,7 +29,7 @@ fn main() {
     let out_path = PathBuf::from("./src").join("bindings.rs");
     let mut bindings_file = Box::new(File::create(out_path).unwrap());
 
-    bindings_file.write(b"#![allow(warnings)]\n").unwrap();
+    bindings_file.write_all(b"#![allow(warnings)]\n").unwrap();
 
     bindings
         .write(bindings_file)

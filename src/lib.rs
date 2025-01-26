@@ -1,3 +1,24 @@
+//! A safe rust wrapper of the [cavacore](https://github.com/karlstav/cava/blob/master/CAVACORE.md) engine.
+//!
+//! # Example
+//! ```rust
+//! use cava_rs::{Builder, Cava, Channel};
+//!
+//! // Configure cava with the builder first...
+//! let builder = Builder {
+//!     // we will only listen to one channel
+//!     channel: Channel::Mono,
+//!     .. Builder::default()
+//! };
+//!
+//! let mut cava = builder.build().expect("Build cava");
+//!
+//! // feed cava with some samples
+//! let mut new_samples: [f64; 3] = [1., 2., 3.];
+//!
+//! // and let it give you the bars back
+//! let bars = cava.execute(&mut new_samples);
+//! ```
 use error::Error;
 
 mod bindings;
@@ -8,30 +29,79 @@ use std::ops::Range;
 
 pub use wrapper::Cava;
 
+/// Type alias for better readability.
 pub type Hz = u32;
 
+/// Sets the amount of channels.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
 pub enum Channel {
-    Mono,
+    /// Represents only one channel.
+    Mono = 1,
+
+    /// Represents two channels.
     Stereo,
 }
 
+/// Main struct to create a new instance of cava.
+///
+/// # Example
+/// ```rust
+/// use cava_rs::{Builder, Cava, Channel};
+///
+/// let builder = Builder {
+///     bars_per_channel: 10,
+///     channel: Channel::Mono,
+///     .. Builder::default()
+/// };
+///
+/// let cava = builder.build().unwrap();
+/// ```
 #[derive(Debug, Clone)]
 pub struct Builder {
-    pub amount_bars: u16,
+    /// Amount of bars per channel.
+    pub bars_per_channel: u16,
+
+    /// The sample rate of the input signal.
     pub sample_rate: u32,
+
+    /// The number of interleaved channels of the input.
     pub channel: Channel,
+
+    /// Toggle automatic sensitivity adjustment.
+    ///
+    /// If `true`: Gives a dynamically adjusted output signal from 0 to 1
+    ///            the output is continously adjusted to use the entire range.
+    /// If `false`: Will pass the raw values from cava directly to the output
+    ///             the max values will then be dependent on the input.
     pub enable_autosens: bool,
+
+    /// Adjust noise reduciton filters. **Has** to be within the range 0..1.
+    /// Its default value contains the recommended value.
+    ///
+    /// The raw visualization is very noisy, this factor adjusts the integral
+    /// and gravity filters inside cavacore to keep the signal smooth.
+    /// 1 will be very slow and smooth, 0 will be fast but noisy.
     pub noise_reduction: f64,
+
+    /// The frequency range which cava will use for the visualisation.
     pub freq_range: Range<Hz>,
 }
 
 impl Builder {
+    /// Create a new cava instance with the current settings.
     pub fn build(&self) -> Result<Cava, Error> {
+        if !(0. <= self.noise_reduction && self.noise_reduction <= 1.) {
+            let err_msg = format!(
+                "`noise_reduction` has to be within the range `0..1`. Current value: {}",
+                self.noise_reduction
+            );
+            return Err(Error::Init(err_msg));
+        }
+
         let plan = unsafe {
             bindings::cava_init(
-                self.amount_bars as i32,
+                self.bars_per_channel as i32,
                 self.sample_rate,
                 self.channel as std::os::raw::c_int,
                 self.enable_autosens as i32,
@@ -65,8 +135,8 @@ impl Builder {
 impl Default for Builder {
     fn default() -> Self {
         Self {
-            amount_bars: 32,
-            sample_rate: 44_200,
+            bars_per_channel: 32,
+            sample_rate: 44_100,
             channel: Channel::Mono,
             enable_autosens: true,
             noise_reduction: 0.77,
@@ -89,7 +159,7 @@ mod tests {
         let sample_rate = 44_100;
 
         let builder = Builder {
-            amount_bars: bars_per_channel,
+            bars_per_channel,
             sample_rate,
             channel: Channel::Stereo,
             enable_autosens: true,
