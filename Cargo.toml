@@ -3,7 +3,7 @@ name = "cavacore"
 version = "0.1.0"
 edition = "2021"
 description = "A rust wrapper of cavacore from the cava music visualizer."
-license = "GPLv2"
+license = "GPL-2.0-or-later"
 repository = "https://github.com/TornaxO7/cavacore-rs"
 authors = ["TornaxO7 <tornax@pm.me>"]
 
