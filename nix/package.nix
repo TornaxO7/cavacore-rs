@@ -5,6 +5,7 @@
 , lib
 , rust-bin
 , cargo-release
+, just
 , ...
 }:
 let
@@ -19,8 +20,10 @@ rustPlatform.buildRustPackage {
     path = ../.;
   };
 
+  # packages for devshell
   buildInputs = [
     cargo-release
+    just
   ];
 
   nativeBuildInputs = [

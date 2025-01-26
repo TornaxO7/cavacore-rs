@@ -1,6 +1,6 @@
 # Cava-rs
 
-A safe wrapper for [cavacore].
+A rust wrapper for [cavacore].
 
 # Required dependencies
 
