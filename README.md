@@ -28,4 +28,4 @@ let bars = cava.execute(&mut new_samples);
 ```
 
 [cavacore]: https://github.com/karlstav/cava/blob/master/CAVACORE.md
-[fftw]: http://www.fftw.org/
+[fftw3]: http://www.fftw.org/
