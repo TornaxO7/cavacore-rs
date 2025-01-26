@@ -3,13 +3,13 @@ use crate::bindings;
 /// The wrapper of `cavacore`.
 /// Can be created by using [`Builder`].
 #[derive(Debug)]
-pub struct Cava {
+pub struct Cavacore {
     plan: *mut bindings::cava_plan,
 
     out_buffer: Box<[f64]>,
 }
 
-impl Cava {
+impl Cavacore {
     // SAFETY: `plan` must point to a valid cava plan
     pub(crate) unsafe fn new(plan: *mut bindings::cava_plan) -> Self {
         debug_assert!(!plan.is_null());
@@ -28,7 +28,7 @@ impl Cava {
     ///
     /// # Example
     /// ```rust
-    /// use cava_rs::{Builder, Cava};
+    /// use cavacore::{Builder, Cavacore};
     ///
     /// let builder = Builder::default();
     ///
@@ -51,7 +51,7 @@ impl Cava {
     }
 }
 
-impl Drop for Cava {
+impl Drop for Cavacore {
     fn drop(&mut self) {
         unsafe {
             bindings::cava_destroy(self.plan);

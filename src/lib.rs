@@ -2,7 +2,7 @@
 //!
 //! # Example
 //! ```rust
-//! use cava_rs::{Builder, Cava, Channel};
+//! use cavacore::{Builder, Cavacore, Channel};
 //!
 //! // Configure cava with the builder first...
 //! let builder = Builder {
@@ -27,7 +27,7 @@ mod wrapper;
 
 use std::ops::Range;
 
-pub use wrapper::Cava;
+pub use wrapper::Cavacore;
 
 /// Type alias for better readability.
 pub type Hz = u32;
@@ -47,7 +47,7 @@ pub enum Channel {
 ///
 /// # Example
 /// ```rust
-/// use cava_rs::{Builder, Cava, Channel};
+/// use cavacore::{Builder, Cavacore, Channel};
 ///
 /// let builder = Builder {
 ///     bars_per_channel: 10,
@@ -90,7 +90,7 @@ pub struct Builder {
 
 impl Builder {
     /// Create a new cava instance with the current settings.
-    pub fn build(&self) -> Result<Cava, Error> {
+    pub fn build(&self) -> Result<Cavacore, Error> {
         if !(0. <= self.noise_reduction && self.noise_reduction <= 1.) {
             let err_msg = format!(
                 "`noise_reduction` has to be within the range `0..1`. Current value: {}",
@@ -128,7 +128,7 @@ impl Builder {
             return Err(Error::Init(err_msg));
         }
 
-        Ok(unsafe { Cava::new(plan) })
+        Ok(unsafe { Cavacore::new(plan) })
     }
 }
 
