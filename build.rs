@@ -18,6 +18,7 @@ fn main() {
         std::env::var("OUT_DIR").unwrap()
     );
     println!("cargo:rustc-link-lib=cavacore");
+    println!("cargo:rustc-link-lib=fftw3");
 
     let bindings = bindgen::Builder::default()
         .header(header_path_str)

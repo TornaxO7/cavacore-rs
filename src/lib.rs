@@ -98,8 +98,7 @@ mod tests {
         };
 
         let mut cava = builder.build().unwrap();
-        let mut cava_in =
-            vec![0.; bars_per_channel as usize * builder.channel as usize].into_boxed_slice();
+        let mut cava_in = vec![0.; buffer_size as usize].into_boxed_slice();
 
         // running cava execute 300 times (simulating about 3.5 seconds run time)
         for k in 0..300 {
