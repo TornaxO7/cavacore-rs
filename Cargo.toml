@@ -3,13 +3,11 @@ name = "cavacore"
 version = "0.1.0"
 edition = "2021"
 description = "A rust wrapper of cavacore from the cava music visualizer."
-license = "GPL-2.0-or-later"
+license = "MIT"
 repository = "https://github.com/TornaxO7/cavacore-rs"
 authors = ["TornaxO7 <tornax@pm.me>"]
 
-[build-dependencies]
-cc = "1"
-bindgen = "0"
-
-[profile.dev]
-opt-level = 1
+[dependencies]
+bounded-integer = { version = "0.5", features = ["types"] }
+realfft = "3.4"
+thiserror = "2.0"

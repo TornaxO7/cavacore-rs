@@ -22,7 +22,15 @@
             ];
           };
 
-          packages.default = pkgs.callPackage (import ./nix/package.nix) { };
+          devShells.default =
+            let
+              rust-toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+            in
+            pkgs.mkShell {
+              packages = with pkgs; [
+                cargo-release
+              ] ++ [ rust-toolchain ];
+            };
         };
       };
 }
