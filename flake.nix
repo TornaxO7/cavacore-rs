@@ -3,6 +3,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     rust-overlay.url = "github:oxalica/rust-overlay";
     flake-parts.url = "github:hercules-ci/flake-parts";
+    cargo-watchdoc.url = "github:modprog/cargo-watchdoc";
   };
 
   outputs = inputs@{ flake-parts, ... }:
@@ -29,7 +30,10 @@
             pkgs.mkShell {
               packages = with pkgs; [
                 cargo-release
-              ] ++ [ rust-toolchain ];
+              ] ++ [
+                rust-toolchain
+                inputs.cargo-watchdoc.packages.${system}.default
+              ];
             };
         };
       };

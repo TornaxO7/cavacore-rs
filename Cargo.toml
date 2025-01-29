@@ -1,6 +1,6 @@
 [package]
 name = "cavacore"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "A rust wrapper of cavacore from the cava music visualizer."
 license = "MIT"

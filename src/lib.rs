@@ -1,16 +1,32 @@
-use std::{
-    f64::consts::PI,
-    num::{NonZeroU32, NonZeroUsize},
-    ops::Range,
-    sync::Arc,
-};
+//! A rust rewrite of the [core processing engine] of cava.
+//!
+//! # Example
+//! ```rust
+//! use std::num::NonZero;
+//! use cavacore::Builder;
+//!
+//! // setup cava and build the engine then
+//! let mut cava = Builder {
+//!   bars_per_channel: NonZero::new(128).unwrap(),
+//!   .. Default::default()
+//! }.build().unwrap();
+//!
+//! // afterwards just feed it some new samples and it will return you the bars
+//! let bars = cava.execute(&[1.0, 2.0, 3.0]);
+//! ```
+//!
+//! [core processing engine]: https://github.com/karlstav/cava/blob/master/CAVACORE.md
+use std::sync::Arc;
 
 use bounded_integer::BoundedU32;
 use realfft::{num_complex::Complex, FftNum, RealFftPlanner, RealToComplex};
 
 pub use error::Error;
 
+mod builder;
 mod error;
+
+pub use builder::{CavaBuilder, DEFAULT_NOISE_REDUCTION};
 
 /// A helper type to restrict the sample rate within the given range.
 pub type SampleRate = BoundedU32<1, 384_000>;
@@ -24,469 +40,216 @@ pub enum Channels {
 
 pub struct Cava {
     bars_per_channel: usize,
-    audio_channels: Channels,
     sample_rate: u32,
-    bass_cut_off_bar: i32,
-    treble_cut_off_bar: i32,
-    init_sens: bool,
     enable_autosens: bool,
-    frame_skip: i32,
-
+    init_sens: bool,
     sens: f64,
     framerate: f64,
+    frame_skip: f64,
     noise_reduction: f64,
 
     left: AudioData<f64>,
-    right: AudioData<f64>,
+    right: Option<AudioData<f64>>,
 
-    bass_multiplier: Vec<f64>,
-    mid_multiplier: Vec<f64>,
-    treble_multiplier: Vec<f64>,
+    bass_hann_window: Box<[f64]>,
+    mid_hann_window: Box<[f64]>,
+    treble_hann_window: Box<[f64]>,
 
-    prev_cava_out: Vec<f64>,
-    input_buffer: Vec<f64>,
-    cava_peak: Vec<f64>,
-    cava_mem: Vec<f64>,
-    cava_out: Vec<f64>,
+    input_buffer: Box<[f64]>,
+    buffer_lower_cut_off: Box<[u32]>,
+    buffer_upper_cut_off: Box<[u32]>,
+    eq: Box<[f64]>,
 
-    eq: Vec<f64>,
+    bass_cut_off_bar: i32,
+    treble_cut_off_bar: i32,
 
-    cut_off_frequency: Vec<f64>,
-    fft_buffer_lower_cut_off: Vec<usize>,
-    fft_buffer_upper_cut_off: Vec<usize>,
-    cava_fall: Vec<f64>,
+    cava_fall: Box<[f64]>,
+    cava_mem: Box<[f64]>,
+    cava_peak: Box<[f64]>,
+    cava_out: Box<[f64]>,
+    prev_cava_out: Box<[f64]>,
 }
 
 impl Cava {
-    pub fn new(
-        bars_per_channel: NonZeroUsize,
-        sample_rate: SampleRate,
-        audio_channels: Channels,
-        enable_autosens: bool,
-        noise_reduction: f64,
-        freq_range: Range<NonZeroU32>,
-    ) -> Result<Self, Error> {
-        let bars_per_channel = usize::from(bars_per_channel);
-        let sample_rate = u32::from(sample_rate);
-        let freq_range = Range {
-            start: u32::from(freq_range.start),
-            end: u32::from(freq_range.end),
-        };
+    pub fn execute(&mut self, input: &[f64]) -> &[f64] {
+        if !input.is_empty() {
+            self.framerate -= self.framerate / 64.;
 
-        let treble_in_buf_size: usize = {
-            let factor = match sample_rate {
-                ..=8124 => 1,
-                8125..=16250 => 2,
-                16251..=32500 => 4,
-                32501..=75000 => 8,
-                75001..=150000 => 16,
-                150001..=300000 => 32,
-                _ => 64,
-            };
+            let amount_audio_channels = if self.right.is_some() { 2. } else { 1. };
 
-            128 * factor
-        };
-        let mid_in_buf_size = treble_in_buf_size * 4;
-        let bass_in_buf_size = treble_in_buf_size * 8;
+            self.framerate += (self.sample_rate as f64 * amount_audio_channels * self.frame_skip)
+                / input.len() as f64
+                / 64.;
 
-        if bars_per_channel > treble_in_buf_size as usize / 2 + 1 {
-            return Err(Error::TooHighAmountBars {
-                amount_bars: bars_per_channel as u32,
-                sample_rate,
-                max_amount_bars: (treble_in_buf_size / 2 + 1) as u32,
-            });
-        }
+            self.frame_skip = 1.;
 
-        if freq_range.is_empty() {
-            return Err(Error::EmptyFreqRange {
-                start: freq_range.start,
-                end: freq_range.end,
-            });
-        }
-
-        if freq_range.end as u32 > sample_rate / 2 {
-            return Err(Error::NyquistIssue {
-                freq: freq_range.end,
-                max_freq: sample_rate / 2,
-            });
-        }
-
-        let left = AudioData::new(treble_in_buf_size);
-        let right = AudioData::new(treble_in_buf_size);
-
-        let input_buffer_size = bass_in_buf_size * audio_channels as usize;
-
-        let bass_multiplier: Vec<f64> = (0..bass_in_buf_size)
-            .map(|i| 0.5 * (1.0 - (2.0 * PI * i as f64 / (bass_in_buf_size as f64 - 1.0)).cos()))
-            .collect();
-        let mid_multiplier: Vec<f64> = (0..mid_in_buf_size)
-            .map(|i| 0.5 * (1.0 - (2.0 * PI * i as f64 / (mid_in_buf_size as f64 - 1.0)).cos()))
-            .collect();
-        let treble_multiplier: Vec<f64> = (0..treble_in_buf_size)
-            .map(|i| 0.5 * (1.0 - (2.0 * PI * i as f64 / (treble_in_buf_size as f64 - 1.0)).cos()))
-            .collect();
-
-        let total_amount_bars = bars_per_channel * audio_channels as usize;
-        let prev_cava_out = vec![0.0; total_amount_bars];
-        let cava_mem = vec![0.0; total_amount_bars];
-        let input_buffer = vec![0.0; input_buffer_size as usize];
-        let cava_peak = vec![0.0; total_amount_bars];
-
-        let eq = vec![0.0; bars_per_channel + 1];
-        let cut_off_frequency = vec![0.0; bars_per_channel + 1];
-        let fft_buffer_lower_cut_off = vec![0; bars_per_channel + 1];
-        let fft_buffer_upper_cut_off = vec![0; bars_per_channel + 1];
-        let cava_fall = vec![0.0; total_amount_bars];
-        let cava_out = vec![0.0; total_amount_bars];
-
-        let mut cava = Cava {
-            bars_per_channel,
-            audio_channels,
-            sample_rate,
-            bass_cut_off_bar: -1,
-            treble_cut_off_bar: -1,
-            init_sens: true,
-            enable_autosens,
-            frame_skip: 1,
-
-            sens: 1.0,
-            framerate: 75.0,
-            noise_reduction,
-
-            left,
-            right,
-
-            bass_multiplier,
-            mid_multiplier,
-            treble_multiplier,
-
-            prev_cava_out,
-            cava_mem,
-            input_buffer,
-            cava_peak,
-            cava_out,
-
-            eq,
-            cut_off_frequency,
-            fft_buffer_lower_cut_off,
-            fft_buffer_upper_cut_off,
-            cava_fall,
-        };
-
-        // Calculate cutoff frequencies and EQ
-        let lower_cut_off = freq_range.start as f64;
-        let upper_cut_off = freq_range.end as f64;
-        let bass_cut_off = 100.0;
-        let treble_cut_off = 500.0;
-
-        let frequency_constant =
-            (lower_cut_off / upper_cut_off).log10() / (1.0 / (bars_per_channel as f64 + 1.0) - 1.0);
-
-        let mut relative_cut_off = vec![0.0; bars_per_channel + 1];
-
-        let mut first_bar = true;
-        #[allow(unused_assignments)]
-        let mut first_treble_bar = false;
-        let mut bar_buffer = vec![0; bars_per_channel + 1];
-
-        for n in 0..=bars_per_channel {
-            let bar_distribution_coefficient = frequency_constant * -1.0
-                + ((n as f64 + 1.0) / (bars_per_channel as f64 + 1.0)) * frequency_constant;
-            cava.cut_off_frequency[n] = upper_cut_off * 10.0f64.powf(bar_distribution_coefficient);
-
-            if n > 0 {
-                if cava.cut_off_frequency[n - 1] >= cava.cut_off_frequency[n]
-                    && cava.cut_off_frequency[n - 1] > bass_cut_off
-                {
-                    cava.cut_off_frequency[n] = cava.cut_off_frequency[n - 1]
-                        + (cava.cut_off_frequency[n - 1] - cava.cut_off_frequency[n - 2]);
-                }
-            }
-
-            relative_cut_off[n] = cava.cut_off_frequency[n] / (cava.sample_rate as f64 / 2.0);
-
-            cava.eq[n] = cava.cut_off_frequency[n].powf(1.0);
-            cava.eq[n] /= 2.0f64.powf(29.0);
-            cava.eq[n] /= (bass_in_buf_size as f64).log2();
-
-            if cava.cut_off_frequency[n] < bass_cut_off {
-                bar_buffer[n] = 1;
-                cava.fft_buffer_lower_cut_off[n] =
-                    (relative_cut_off[n] * (bass_in_buf_size as f64 / 2.0)) as usize;
-                cava.bass_cut_off_bar += 1;
-                cava.treble_cut_off_bar += 1;
-                if cava.bass_cut_off_bar > 0 {
-                    first_bar = false;
-                }
-
-                if cava.fft_buffer_lower_cut_off[n] > bass_in_buf_size / 2 {
-                    cava.fft_buffer_lower_cut_off[n] = bass_in_buf_size / 2;
-                }
-            } else if cava.cut_off_frequency[n] > bass_cut_off
-                && cava.cut_off_frequency[n] < treble_cut_off
-            {
-                bar_buffer[n] = 2;
-                cava.fft_buffer_lower_cut_off[n] =
-                    (relative_cut_off[n] * (mid_in_buf_size as f64 / 2.0)) as usize;
-                cava.treble_cut_off_bar += 1;
-                if (cava.treble_cut_off_bar - cava.bass_cut_off_bar) == 1 {
-                    first_bar = true;
-                    if n > 0 {
-                        cava.fft_buffer_upper_cut_off[n - 1] =
-                            (relative_cut_off[n] * (bass_in_buf_size as f64 / 2.0)) as usize;
-                    }
-                } else {
-                    first_bar = false;
-                }
-
-                if cava.fft_buffer_lower_cut_off[n] > mid_in_buf_size / 2 {
-                    cava.fft_buffer_lower_cut_off[n] = mid_in_buf_size / 2;
-                }
-            } else {
-                bar_buffer[n] = 3;
-                cava.fft_buffer_lower_cut_off[n] =
-                    (relative_cut_off[n] * (treble_in_buf_size as f64 / 2.0)) as usize;
-                first_treble_bar = true;
-                if first_treble_bar {
-                    first_bar = true;
-                    if n > 0 {
-                        cava.fft_buffer_upper_cut_off[n - 1] =
-                            (relative_cut_off[n] * (mid_in_buf_size as f64 / 2.0)) as usize;
-                    }
-                } else {
-                    first_bar = false;
-                }
-
-                if cava.fft_buffer_lower_cut_off[n] > treble_in_buf_size / 2 {
-                    cava.fft_buffer_lower_cut_off[n] = treble_in_buf_size / 2;
-                }
-            }
-
-            if n > 0 {
-                if !first_bar {
-                    cava.fft_buffer_upper_cut_off[n - 1] = cava.fft_buffer_lower_cut_off[n] - 1;
-
-                    if cava.fft_buffer_lower_cut_off[n] <= cava.fft_buffer_lower_cut_off[n - 1] {
-                        let room_for_more = match bar_buffer[n] {
-                            1 => {
-                                cava.fft_buffer_lower_cut_off[n - 1] + 1 < bass_in_buf_size / 2 + 1
-                            }
-                            2 => cava.fft_buffer_lower_cut_off[n - 1] + 1 < mid_in_buf_size / 2 + 1,
-                            3 => {
-                                cava.fft_buffer_lower_cut_off[n - 1] + 1
-                                    < treble_in_buf_size / 2 + 1
-                            }
-                            _ => false,
-                        };
-
-                        if room_for_more {
-                            cava.fft_buffer_lower_cut_off[n] =
-                                cava.fft_buffer_lower_cut_off[n - 1] + 1;
-                            cava.fft_buffer_upper_cut_off[n - 1] =
-                                cava.fft_buffer_lower_cut_off[n] - 1;
-
-                            relative_cut_off[n] = match bar_buffer[n] {
-                                1 => {
-                                    cava.fft_buffer_lower_cut_off[n] as f64
-                                        / (bass_in_buf_size as f64 / 2.0)
-                                }
-                                2 => {
-                                    cava.fft_buffer_lower_cut_off[n] as f64
-                                        / (mid_in_buf_size as f64 / 2.0)
-                                }
-                                3 => {
-                                    cava.fft_buffer_lower_cut_off[n] as f64
-                                        / (treble_in_buf_size as f64 / 2.0)
-                                }
-                                _ => 0.0,
-                            };
-
-                            cava.cut_off_frequency[n] =
-                                relative_cut_off[n] * (cava.sample_rate as f64 / 2.0);
-                        }
-                    }
-                } else {
-                    if cava.fft_buffer_upper_cut_off[n - 1] <= cava.fft_buffer_lower_cut_off[n - 1]
-                    {
-                        cava.fft_buffer_upper_cut_off[n - 1] =
-                            cava.fft_buffer_lower_cut_off[n - 1] + 1;
-                    }
-                }
-            }
-        }
-
-        Ok(cava)
-    }
-
-    pub fn execute(&mut self, new_samples: &[f64]) -> &[f64] {
-        let new_samples_len = new_samples.len();
-        let input_buffer_len = self.input_buffer.len();
-
-        if new_samples_len > input_buffer_len {
-            return &self.cava_out;
-        }
-
-        let silence = new_samples.iter().all(|&v| v == 0.0);
-        if !new_samples.is_empty() {
-            self.framerate -= self.framerate / 64.0;
-            self.framerate += ((self.sample_rate as f64
-                * self.audio_channels as usize as f64
-                * self.frame_skip as f64)
-                / new_samples.len() as f64)
-                / 64.0;
-            self.frame_skip = 1;
-
+            let input_buffer_len = self.input_buffer.len();
             self.input_buffer
-                .copy_within(..input_buffer_len - new_samples_len, new_samples_len);
-            self.input_buffer[..new_samples_len].copy_from_slice(new_samples);
+                .copy_within(..input_buffer_len - input.len(), input.len());
+            self.input_buffer[..input.len()].copy_from_slice(input);
         } else {
-            self.frame_skip += 1;
+            self.frame_skip += 1.;
         }
 
-        for n in 0..self.left.in_bass.len() {
-            match self.audio_channels {
-                Channels::Mono => {
-                    self.left.in_bass[n] = self.bass_multiplier[n] * self.input_buffer[n];
-                }
-                Channels::Stereo => {
-                    self.left.in_bass[n] = self.bass_multiplier[n] * self.input_buffer[n * 2 + 1];
-                    self.right.in_bass[n] = self.bass_multiplier[n] * self.input_buffer[n * 2];
-                }
+        // fill the bass, mid and treble buffers
+        if let Some(right) = self.right.as_mut() {
+            // bass
+            for i in 0..self.left.in_bass.len() {
+                right.in_bass[i] = self.input_buffer[i * 2] * self.bass_hann_window[i];
+                self.left.in_bass[i] = self.input_buffer[i * 2 + 1] * self.bass_hann_window[i];
+            }
+
+            // mid
+            for i in 0..self.left.in_mid.len() {
+                right.in_mid[i] = self.input_buffer[i * 2] * self.mid_hann_window[i];
+                self.left.in_mid[i] = self.input_buffer[i * 2 + 1] * self.mid_hann_window[i];
+            }
+
+            // treble
+            for i in 0..self.left.in_treble.len() {
+                right.in_treble[i] = self.input_buffer[i * 2] * self.treble_hann_window[i];
+                self.left.in_treble[i] = self.input_buffer[i * 2 + 1] * self.treble_hann_window[i];
+            }
+
+            right
+                .p_bass
+                .process(&mut right.in_bass, &mut right.out_bass)
+                .unwrap();
+            right
+                .p_mid
+                .process(&mut right.in_mid, &mut right.out_mid)
+                .unwrap();
+            right
+                .p_treble
+                .process(&mut right.in_treble, &mut right.out_treble)
+                .unwrap();
+        } else {
+            // bass
+            for i in 0..self.left.in_bass.len() {
+                self.left.in_bass[i] = self.input_buffer[i] * self.bass_hann_window[i];
+            }
+
+            // mid
+            for i in 0..self.left.in_mid.len() {
+                self.left.in_mid[i] = self.input_buffer[i] * self.mid_hann_window[i];
+            }
+
+            // treble
+            for i in 0..self.left.in_treble.len() {
+                self.left.in_treble[i] = self.input_buffer[i] * self.treble_hann_window[i];
             }
         }
 
-        for n in 0..self.left.in_mid.len() {
-            match self.audio_channels {
-                Channels::Mono => {
-                    self.left.in_mid[n] = self.mid_multiplier[n] * self.input_buffer[n];
-                }
-                Channels::Stereo => {
-                    self.left.in_mid[n] = self.mid_multiplier[n] * self.input_buffer[n * 2 + 1];
-                    self.right.in_mid[n] = self.mid_multiplier[n] * self.input_buffer[n * 2];
-                }
-            }
-        }
-
-        for n in 0..self.left.in_treble.len() {
-            match self.audio_channels {
-                Channels::Mono => {
-                    self.left.in_treble[n] = self.treble_multiplier[n] * self.input_buffer[n];
-                }
-                Channels::Stereo => {
-                    self.left.in_treble[n] =
-                        self.treble_multiplier[n] * self.input_buffer[n * 2 + 1];
-                    self.right.in_treble[n] = self.treble_multiplier[n] * self.input_buffer[n * 2];
-                }
-            }
-        }
-
+        // fft goes brrrrrrr
         self.left
-            .bass
+            .p_bass
             .process(&mut self.left.in_bass, &mut self.left.out_bass)
             .unwrap();
         self.left
-            .mid
+            .p_mid
             .process(&mut self.left.in_mid, &mut self.left.out_mid)
             .unwrap();
         self.left
-            .treble
+            .p_treble
             .process(&mut self.left.in_treble, &mut self.left.out_treble)
             .unwrap();
 
-        if self.audio_channels == Channels::Stereo {
-            self.right
-                .bass
-                .process(&mut self.right.in_bass, &mut self.right.out_bass)
-                .unwrap();
-            self.right
-                .mid
-                .process(&mut self.right.in_mid, &mut self.right.out_mid)
-                .unwrap();
-            self.right
-                .treble
-                .process(&mut self.right.in_treble, &mut self.right.out_treble)
-                .unwrap();
-        }
-
+        // separate frequency bands
         for n in 0..self.bars_per_channel {
-            let mut temp_l = 0.0;
-            let mut temp_r = 0.0;
+            let mut tmp_l = 0.;
+            let mut tmp_r = 0.;
 
-            for i in self.fft_buffer_lower_cut_off[n]..=self.fft_buffer_upper_cut_off[n] {
+            // add upp FFT values within bands
+            for i in self.buffer_lower_cut_off[n] as usize..self.buffer_upper_cut_off[n] as usize {
                 if n <= self.bass_cut_off_bar as usize {
-                    temp_l += self.left.out_bass[i].norm();
-                    if self.audio_channels == Channels::Stereo {
-                        temp_r += self.right.out_bass[i].norm();
+                    tmp_l += self.left.out_bass[i].norm();
+                    if let Some(right) = &self.right {
+                        tmp_r = right.out_bass[i].norm();
                     }
-                } else if n > self.bass_cut_off_bar as usize
-                    && n <= self.treble_cut_off_bar as usize
+                } else if (self.bass_cut_off_bar as usize..=self.treble_cut_off_bar as usize)
+                    .contains(&n)
                 {
-                    temp_l += self.left.out_mid[i].norm();
-                    if self.audio_channels == Channels::Stereo {
-                        temp_r += self.right.out_mid[i].norm();
+                    tmp_l += self.left.out_mid[i].norm();
+                    if let Some(right) = &self.right {
+                        tmp_r = right.out_mid[i].norm();
                     }
-                } else if n > self.treble_cut_off_bar as usize {
-                    temp_l += self.left.out_treble[i].norm();
-                    if self.audio_channels == Channels::Stereo {
-                        temp_r += self.right.out_treble[i].norm();
+                } else if (self.treble_cut_off_bar as usize) < n {
+                    tmp_l += self.left.out_treble[i].norm();
+                    if let Some(right) = &self.right {
+                        tmp_r = right.out_treble[i].norm();
                     }
                 }
             }
 
-            temp_l /=
-                (self.fft_buffer_upper_cut_off[n] - self.fft_buffer_lower_cut_off[n] + 1) as f64;
-            temp_l *= self.eq[n];
-            self.cava_out[n] = temp_l;
+            // getting average multiply with eq
+            tmp_l /= self.buffer_upper_cut_off[n] as f64 - self.buffer_lower_cut_off[n] as f64 + 1.;
+            tmp_l *= self.eq[n];
+            self.cava_out[n] = tmp_l;
 
-            if self.audio_channels == Channels::Stereo {
-                temp_r /= (self.fft_buffer_upper_cut_off[n] - self.fft_buffer_lower_cut_off[n] + 1)
-                    as f64;
-                temp_r *= self.eq[n];
-                self.cava_out[n + self.bars_per_channel] = temp_r;
+            if self.right.is_some() {
+                tmp_r /=
+                    self.buffer_upper_cut_off[n] as f64 - self.buffer_lower_cut_off[n] as f64 + 1.;
+                tmp_r *= self.eq[n];
+                self.cava_out[n + self.bars_per_channel] = tmp_r;
             }
         }
 
+        // applying sens or getting max value
         if self.enable_autosens {
-            for n in 0..self.bars_per_channel * self.audio_channels as usize {
-                self.cava_out[n] *= self.sens;
+            for val in self.cava_out.iter_mut() {
+                *val *= self.sens;
             }
         }
 
-        let gravity_mod = (60.0 / self.framerate).powf(2.5) * 1.54 / self.noise_reduction;
-        let gravity_mod = if gravity_mod < 1.0 { 1.0 } else { gravity_mod };
+        // process [smoothing]
+        let mut is_overshooting = false;
+        // THONK: eeeh... what happens if noise_reduction equals zero??
+        let gravity_mod = {
+            let gravity_mod = (60. / self.framerate).powf(2.5) * 1.54 / self.noise_reduction;
 
-        let mut overshoot = false;
+            gravity_mod.max(1.)
+        };
 
-        for n in 0..self.bars_per_channel * self.audio_channels as usize {
+        let amount_channels = if self.right.is_some() { 2 } else { 1 };
+        for n in 0..self.bars_per_channel * amount_channels {
+            // [smoothing]: falloff
             if self.cava_out[n] < self.prev_cava_out[n] && self.noise_reduction > 0.1 {
-                self.cava_out[n] = self.cava_peak[n]
-                    * (1.0 - (self.cava_fall[n] * self.cava_fall[n] * gravity_mod));
+                self.cava_out[n] =
+                    self.cava_peak[n] * (1. - (self.cava_fall[n].powf(2.) * gravity_mod));
+
                 if self.cava_out[n] < 0.0 {
                     self.cava_out[n] = 0.0;
                 }
                 self.cava_fall[n] += 0.028;
             } else {
                 self.cava_peak[n] = self.cava_out[n];
-                self.cava_fall[n] = 0.0;
+                self.cava_fall[n] = 0.;
             }
             self.prev_cava_out[n] = self.cava_out[n];
 
+            // [smoothing]: integral
             self.cava_out[n] = self.cava_mem[n] * self.noise_reduction + self.cava_out[n];
             self.cava_mem[n] = self.cava_out[n];
-
-            if self.enable_autosens && self.cava_out[n] > 1.0 {
-                overshoot = true;
+            if self.enable_autosens {
+                // check if we overshoot target height
+                if self.cava_out[n] > 1. {
+                    is_overshooting = true;
+                }
             }
         }
 
+        // calculating automatic sense adjustment
         if self.enable_autosens {
-            if overshoot {
+            if is_overshooting {
                 self.sens *= 0.98;
                 self.init_sens = false;
-            } else if !silence {
-                self.sens *= 1.002;
-                if self.init_sens {
-                    self.sens *= 1.1;
+            } else {
+                let is_silent = input.iter().all(|&v| v == 0.);
+                if is_silent {
+                    self.sens *= 1.002;
+                    if self.init_sens {
+                        self.sens *= 1.1;
+                    }
                 }
             }
         }
@@ -495,10 +258,228 @@ impl Cava {
     }
 }
 
+impl CavaBuilder {
+    pub fn build(&self) -> Result<Cava, Vec<Error>> {
+        self.sanity_check()?;
+
+        let bars_per_channel = self.bars_per_channel;
+        let sample_rate = self.sample_rate;
+        let enable_autosens = self.enable_autosens;
+        let init_sens = true;
+        let sens = 1.;
+        let framerate = 75.;
+        let frame_skip = 1.;
+        let noise_reduction = self.noise_reduction;
+
+        let treble_buffer_size = self.compute_treble_buffer_size();
+        let (left, right): (AudioData<f64>, Option<AudioData<f64>>) = {
+            let left = AudioData::new(treble_buffer_size);
+            let right = match self.audio_channels {
+                Channels::Mono => None,
+                Channels::Stereo => Some(AudioData::new(treble_buffer_size)),
+            };
+            (left, right)
+        };
+
+        let bass_hann_window = compute_hann_window(left.in_bass.len());
+        let mid_hann_window = compute_hann_window(left.in_mid.len());
+        let treble_hann_window = compute_hann_window(left.in_treble.len());
+
+        let input_buffer = vec![0.0; left.in_bass.len()].into_boxed_slice();
+
+        let mut buffer_lower_cut_off = vec![0; bars_per_channel + 1].into_boxed_slice();
+        let mut buffer_upper_cut_off = vec![0; bars_per_channel + 1].into_boxed_slice();
+        let mut eq = vec![0.; bars_per_channel + 1].into_boxed_slice();
+        let mut cut_off_frequency = vec![0.; bars_per_channel + 1].into_boxed_slice();
+
+        let total_amount_bars = bars_per_channel * self.audio_channels as usize;
+        let cava_fall = vec![0.0; total_amount_bars].into_boxed_slice();
+        let cava_mem = vec![0.0; total_amount_bars].into_boxed_slice();
+        let cava_peak = vec![0.0; total_amount_bars].into_boxed_slice();
+        let prev_cava_out = vec![0.0; total_amount_bars].into_boxed_slice();
+        let cava_out = vec![0.0; total_amount_bars].into_boxed_slice();
+
+        // process: calculate cutoff frequencies and eq
+        let bass_cut_off = 100.;
+        let treble_cut_off = 500.;
+
+        // calculate frequency constant (used to distribute bars across the frequency band)
+        let frequency_constant = (self.freq_range.start as f32 / self.freq_range.end as f32)
+            .log10()
+            / (1. / (self.bars_per_channel as f32 + 1.) - 1.);
+
+        let mut relative_cut_off = vec![0.; self.bars_per_channel + 1].into_boxed_slice();
+        let mut bass_cut_off_bar = -1;
+        let mut treble_cut_off_bar = -1;
+        let mut first_bar = true;
+        let mut first_treble_bar = 0;
+        let mut bar_buffer = vec![0; self.bars_per_channel + 1];
+
+        for n in 0..bars_per_channel + 1 {
+            let mut bar_distribution_coefficient = -frequency_constant;
+            bar_distribution_coefficient +=
+                (n as f32 + 1.) / (bars_per_channel as f32 + 1.) * frequency_constant;
+
+            cut_off_frequency[n] =
+                self.freq_range.end as f32 * 10f32.powf(bar_distribution_coefficient);
+
+            if n > 0 {
+                // what?
+                let condition = cut_off_frequency[n - 1] >= cut_off_frequency[n]
+                    && cut_off_frequency[n - 1] > bass_cut_off;
+
+                if condition {
+                    cut_off_frequency[n] = cut_off_frequency[n - 1]
+                        + (cut_off_frequency[n - 1] - cut_off_frequency[n - 2]);
+                }
+            }
+
+            relative_cut_off[n] = cut_off_frequency[n] / (self.sample_rate as f32 / 2.);
+
+            // some random magic?
+            // eq[n] = cut_off_frequency[n].powf(1.);
+            eq[n] /= 2f64.powf(29.);
+            eq[n] /= (left.in_bass.len() as f64).log2();
+
+            if cut_off_frequency[n] < bass_cut_off {
+                // BASS
+                bar_buffer[n] = 1;
+                buffer_lower_cut_off[n] =
+                    relative_cut_off[n] as u32 * (left.in_bass.len() as u32 / 2);
+                bass_cut_off_bar += 1;
+                treble_cut_off_bar += 1;
+                if bass_cut_off_bar > 0 {
+                    first_bar = false;
+                }
+
+                if buffer_lower_cut_off[n] > left.in_bass.len() as u32 / 2 {
+                    buffer_lower_cut_off[n] = left.in_bass.len() as u32 / 2;
+                }
+            } else if cut_off_frequency[n] > bass_cut_off && cut_off_frequency[n] < treble_cut_off {
+                // MID
+                bar_buffer[n] = 2;
+                buffer_lower_cut_off[n] =
+                    relative_cut_off[n] as u32 * (left.in_mid.len() as u32 / 2);
+                treble_cut_off_bar += 1;
+
+                if (treble_cut_off_bar - bass_cut_off_bar) == 1 {
+                    first_bar = true;
+                    if n > 0 {
+                        buffer_upper_cut_off[n - 1] =
+                            relative_cut_off[n] as u32 * (left.in_bass.len() as u32 / 2);
+                    }
+                } else {
+                    first_bar = false;
+                }
+
+                if buffer_lower_cut_off[n] > left.in_mid.len() as u32 / 2 {
+                    buffer_lower_cut_off[n] = left.in_mid.len() as u32 / 2;
+                }
+            } else {
+                // TREBLE
+                bar_buffer[n] = 3;
+                buffer_lower_cut_off[n] =
+                    relative_cut_off[n] as u32 * (left.in_treble.len() as u32 / 2);
+                first_treble_bar += 1;
+                if first_treble_bar == 1 {
+                    first_bar = true;
+                    if n > 0 {
+                        buffer_upper_cut_off[n - 1] =
+                            relative_cut_off[n] as u32 * (left.in_mid.len() as u32 / 2);
+                    }
+                } else {
+                    first_bar = false;
+                }
+
+                if buffer_lower_cut_off[n] > left.in_treble.len() as u32 / 2 {
+                    buffer_lower_cut_off[n] = left.in_treble.len() as u32 / 2;
+                }
+            }
+
+            if n > 0 {
+                if !first_bar {
+                    buffer_upper_cut_off[n - 1] = buffer_lower_cut_off[n] - 1;
+
+                    if buffer_lower_cut_off[n] <= buffer_lower_cut_off[n - 1] {
+                        let mut room_for_more = false;
+
+                        if bar_buffer[n] == 1 {
+                            if buffer_lower_cut_off[n - 1] + 1 < left.in_bass.len() as u32 / 2 + 1 {
+                                room_for_more = true;
+                            }
+                        } else if bar_buffer[n] == 2 {
+                            if buffer_lower_cut_off[n - 1] + 1 < left.in_mid.len() as u32 / 2 + 1 {
+                                room_for_more = true;
+                            }
+                        } else if bar_buffer[n] == 3 {
+                            if buffer_lower_cut_off[n - 1] + 1 < left.in_treble.len() as u32 / 2 + 1
+                            {
+                                room_for_more = true;
+                            }
+                        }
+
+                        if room_for_more {
+                            // push the spectrum up
+                            buffer_lower_cut_off[n] = buffer_lower_cut_off[n - 1] + 1;
+                            buffer_upper_cut_off[n - 1] = buffer_lower_cut_off[n] - 1;
+
+                            // calculate new cut off frequency
+                            if bar_buffer[n] == 1 {
+                                relative_cut_off[n] = buffer_lower_cut_off[n] as f32
+                                    / (left.in_bass.len() as f32 / 2.);
+                            } else if bar_buffer[n] == 2 {
+                                relative_cut_off[n] = buffer_lower_cut_off[n] as f32
+                                    / (left.in_mid.len() as f32 / 2.);
+                            } else if bar_buffer[n] == 3 {
+                                relative_cut_off[n] = buffer_lower_cut_off[n] as f32
+                                    / (left.in_treble.len() as f32 / 2.);
+                            }
+
+                            cut_off_frequency[n] =
+                                relative_cut_off[n] * (self.sample_rate as f32 / 2.);
+                        }
+                    }
+                } else {
+                    if buffer_upper_cut_off[n - 1] <= buffer_lower_cut_off[n - 1] {
+                        buffer_upper_cut_off[n - 1] = buffer_lower_cut_off[n - 1] + 1;
+                    }
+                }
+            }
+        }
+
+        Ok(Cava {
+            bars_per_channel,
+            sample_rate,
+            enable_autosens,
+            init_sens,
+            sens,
+            framerate,
+            frame_skip,
+            noise_reduction,
+            left,
+            right,
+            bass_hann_window,
+            mid_hann_window,
+            treble_hann_window,
+            input_buffer,
+            buffer_lower_cut_off,
+            buffer_upper_cut_off,
+            eq,
+            bass_cut_off_bar,
+            treble_cut_off_bar,
+            cava_fall,
+            cava_mem,
+            cava_peak,
+            cava_out,
+            prev_cava_out,
+        })
+    }
+}
+
 struct AudioData<F: FftNum> {
-    bass: Arc<dyn RealToComplex<F>>,
-    mid: Arc<dyn RealToComplex<F>>,
-    treble: Arc<dyn RealToComplex<F>>,
+    p_bass: Arc<dyn RealToComplex<F>>,
+    p_mid: Arc<dyn RealToComplex<F>>,
+    p_treble: Arc<dyn RealToComplex<F>>,
 
     out_bass: Vec<Complex<F>>,
     out_mid: Vec<Complex<F>>,
@@ -526,9 +507,9 @@ impl<F: FftNum> AudioData<F> {
         let in_treble = treble.make_input_vec();
 
         Self {
-            bass,
-            mid,
-            treble,
+            p_bass: bass,
+            p_mid: mid,
+            p_treble: treble,
 
             out_bass,
             out_mid,
@@ -539,4 +520,16 @@ impl<F: FftNum> AudioData<F> {
             in_treble,
         }
     }
+}
+
+fn compute_hann_window(buffer_size: usize) -> Box<[f64]> {
+    let mut hann_window = Vec::with_capacity(buffer_size);
+
+    for i in 0..buffer_size {
+        let multiplier =
+            0.5 * (1. - (2. * std::f64::consts::PI * i as f64 / (buffer_size as f64 - 1.)).cos());
+        hann_window.push(multiplier);
+    }
+
+    hann_window.into_boxed_slice()
 }
