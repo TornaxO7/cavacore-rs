@@ -92,17 +92,17 @@ impl CavaBuilder {
     }
 
     pub(crate) fn compute_treble_buffer_size(&self) -> usize {
-        let factor = if self.sample_rate < 8_125 {
+        let factor = if self.sample_rate <= 8_125 {
             1
-        } else if self.sample_rate < 16_250 {
+        } else if self.sample_rate <= 16_250 {
             2
-        } else if self.sample_rate < 32_500 {
+        } else if self.sample_rate <= 32_500 {
             4
-        } else if self.sample_rate < 75_000 {
+        } else if self.sample_rate <= 75_000 {
             8
-        } else if self.sample_rate < 150_000 {
+        } else if self.sample_rate <= 150_000 {
             16
-        } else if self.sample_rate < 300_000 {
+        } else if self.sample_rate <= 300_000 {
             32
         } else {
             64
