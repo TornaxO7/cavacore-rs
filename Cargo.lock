@@ -16,7 +16,7 @@ checksum = "102dbef1187b1893e6dfe05a774e79fd52265f49f214f6879c8ff49f52c8188b"
 
 [[package]]
 name = "cavacore"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "bounded-integer",
  "realfft",
