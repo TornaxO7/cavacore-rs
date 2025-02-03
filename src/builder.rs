@@ -84,7 +84,7 @@ impl CavaBuilder {
             });
         }
 
-        if !errors.is_empty() {
+        if errors.len() > 0 {
             return Err(errors);
         }
 
@@ -116,5 +116,44 @@ impl Default for CavaBuilder {
             noise_reduction: 0.77,
             freq_range: 50..10_000,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::SampleRate;
+
+    use super::CavaBuilder;
+
+    #[test]
+    fn sample_rate() {
+        assert!(SampleRate::new(0).is_none());
+        assert!(SampleRate::new(384_001).is_none());
+    }
+
+    #[test]
+    fn treble_buffer_size() {
+        let mut builder = CavaBuilder::default();
+        builder = builder.sample_rate(SampleRate::new(8_125).unwrap());
+
+        assert_eq!(128 * 1, builder.compute_treble_buffer_size());
+
+        builder = builder.sample_rate(SampleRate::new(16_250).unwrap());
+        assert_eq!(128 * 2, builder.compute_treble_buffer_size());
+
+        builder = builder.sample_rate(SampleRate::new(32_500).unwrap());
+        assert_eq!(128 * 4, builder.compute_treble_buffer_size());
+
+        builder = builder.sample_rate(SampleRate::new(75_000).unwrap());
+        assert_eq!(128 * 8, builder.compute_treble_buffer_size());
+
+        builder = builder.sample_rate(SampleRate::new(150_000).unwrap());
+        assert_eq!(128 * 16, builder.compute_treble_buffer_size());
+
+        builder = builder.sample_rate(SampleRate::new(300_000).unwrap());
+        assert_eq!(128 * 32, builder.compute_treble_buffer_size());
+
+        builder = builder.sample_rate(SampleRate::new(300_001).unwrap());
+        assert_eq!(128 * 64, builder.compute_treble_buffer_size());
     }
 }

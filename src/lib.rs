@@ -1,20 +1,5 @@
 //! A rust rewrite of the [core processing engine] of cava.
 //!
-//! # Example
-//! ```rust
-//! use std::num::NonZero;
-//! use cavacore::Builder;
-//!
-//! // setup cava and build the engine then
-//! let mut cava = Builder {
-//!   bars_per_channel: NonZero::new(128).unwrap(),
-//!   .. Default::default()
-//! }.build().unwrap();
-//!
-//! // afterwards just feed it some new samples and it will return you the bars
-//! let bars = cava.execute(&[1.0, 2.0, 3.0]);
-//! ```
-//!
 //! [core processing engine]: https://github.com/karlstav/cava/blob/master/CAVACORE.md
 use std::sync::Arc;
 
@@ -66,13 +51,21 @@ pub struct Cava {
     cava_fall: Box<[f64]>,
     cava_mem: Box<[f64]>,
     cava_peak: Box<[f64]>,
-    cava_out: Box<[f64]>,
     prev_cava_out: Box<[f64]>,
 }
 
 impl Cava {
-    pub fn execute(&mut self, input: &[f64]) -> &[f64] {
-        if !input.is_empty() {
+    pub fn make_output(&self) -> Box<[f64]> {
+        let amount_channels = if self.right.is_some() { 2 } else { 1 };
+        let total_amount_bars = self.bars_per_channel * amount_channels;
+
+        vec![0.; total_amount_bars].into_boxed_slice()
+    }
+
+    pub fn execute(&mut self, input: &[f64], output: &mut [f64]) {
+        if input.is_empty() {
+            self.frame_skip += 1.;
+        } else {
             self.framerate -= self.framerate / 64.;
 
             let amount_audio_channels = if self.right.is_some() { 2. } else { 1. };
@@ -87,8 +80,6 @@ impl Cava {
             self.input_buffer
                 .copy_within(..input_buffer_len - input.len(), input.len());
             self.input_buffer[..input.len()].copy_from_slice(input);
-        } else {
-            self.frame_skip += 1.;
         }
 
         // fill the bass, mid and treble buffers
@@ -160,23 +151,23 @@ impl Cava {
             let mut tmp_r = 0.;
 
             // add upp FFT values within bands
-            for i in self.buffer_lower_cut_off[n] as usize..self.buffer_upper_cut_off[n] as usize {
+            for i in self.buffer_lower_cut_off[n] as usize..=self.buffer_upper_cut_off[n] as usize {
                 if n <= self.bass_cut_off_bar as usize {
                     tmp_l += self.left.out_bass[i].norm();
                     if let Some(right) = &self.right {
-                        tmp_r = right.out_bass[i].norm();
+                        tmp_r += right.out_bass[i].norm();
                     }
                 } else if (self.bass_cut_off_bar as usize..=self.treble_cut_off_bar as usize)
                     .contains(&n)
                 {
                     tmp_l += self.left.out_mid[i].norm();
                     if let Some(right) = &self.right {
-                        tmp_r = right.out_mid[i].norm();
+                        tmp_r += right.out_mid[i].norm();
                     }
                 } else if (self.treble_cut_off_bar as usize) < n {
                     tmp_l += self.left.out_treble[i].norm();
                     if let Some(right) = &self.right {
-                        tmp_r = right.out_treble[i].norm();
+                        tmp_r += right.out_treble[i].norm();
                     }
                 }
             }
@@ -184,19 +175,19 @@ impl Cava {
             // getting average multiply with eq
             tmp_l /= self.buffer_upper_cut_off[n] as f64 - self.buffer_lower_cut_off[n] as f64 + 1.;
             tmp_l *= self.eq[n];
-            self.cava_out[n] = tmp_l;
+            output[n] = tmp_l;
 
             if self.right.is_some() {
                 tmp_r /=
                     self.buffer_upper_cut_off[n] as f64 - self.buffer_lower_cut_off[n] as f64 + 1.;
                 tmp_r *= self.eq[n];
-                self.cava_out[n + self.bars_per_channel] = tmp_r;
+                output[n + self.bars_per_channel] = tmp_r;
             }
         }
 
         // applying sens or getting max value
         if self.enable_autosens {
-            for val in self.cava_out.iter_mut() {
+            for val in output.iter_mut() {
                 *val *= self.sens;
             }
         }
@@ -213,26 +204,25 @@ impl Cava {
         let amount_channels = if self.right.is_some() { 2 } else { 1 };
         for n in 0..self.bars_per_channel * amount_channels {
             // [smoothing]: falloff
-            if self.cava_out[n] < self.prev_cava_out[n] && self.noise_reduction > 0.1 {
-                self.cava_out[n] =
-                    self.cava_peak[n] * (1. - (self.cava_fall[n].powf(2.) * gravity_mod));
+            if output[n] < self.prev_cava_out[n] && self.noise_reduction > 0.1 {
+                output[n] = self.cava_peak[n] * (1. - (self.cava_fall[n].powf(2.) * gravity_mod));
 
-                if self.cava_out[n] < 0.0 {
-                    self.cava_out[n] = 0.0;
+                if output[n] < 0.0 {
+                    output[n] = 0.0;
                 }
                 self.cava_fall[n] += 0.028;
             } else {
-                self.cava_peak[n] = self.cava_out[n];
+                self.cava_peak[n] = output[n];
                 self.cava_fall[n] = 0.;
             }
-            self.prev_cava_out[n] = self.cava_out[n];
+            self.prev_cava_out[n] = output[n];
 
             // [smoothing]: integral
-            self.cava_out[n] = self.cava_mem[n] * self.noise_reduction + self.cava_out[n];
-            self.cava_mem[n] = self.cava_out[n];
+            output[n] = self.cava_mem[n] * self.noise_reduction + output[n];
+            self.cava_mem[n] = output[n];
             if self.enable_autosens {
                 // check if we overshoot target height
-                if self.cava_out[n] > 1. {
+                if output[n] > 1. {
                     is_overshooting = true;
                 }
             }
@@ -253,8 +243,6 @@ impl Cava {
                 }
             }
         }
-
-        &self.cava_out
     }
 }
 
@@ -285,28 +273,28 @@ impl CavaBuilder {
         let mid_hann_window = compute_hann_window(left.in_mid.len());
         let treble_hann_window = compute_hann_window(left.in_treble.len());
 
-        let input_buffer = vec![0.0; left.in_bass.len()].into_boxed_slice();
+        let input_buffer =
+            vec![0.0; left.in_bass.len() * self.audio_channels as usize].into_boxed_slice();
 
         let mut buffer_lower_cut_off = vec![0; bars_per_channel + 1].into_boxed_slice();
         let mut buffer_upper_cut_off = vec![0; bars_per_channel + 1].into_boxed_slice();
         let mut eq = vec![0.; bars_per_channel + 1].into_boxed_slice();
-        let mut cut_off_frequency = vec![0.; bars_per_channel + 1].into_boxed_slice();
+        let mut cut_off_frequency = vec![0f64; bars_per_channel + 1].into_boxed_slice();
 
         let total_amount_bars = bars_per_channel * self.audio_channels as usize;
         let cava_fall = vec![0.0; total_amount_bars].into_boxed_slice();
         let cava_mem = vec![0.0; total_amount_bars].into_boxed_slice();
         let cava_peak = vec![0.0; total_amount_bars].into_boxed_slice();
         let prev_cava_out = vec![0.0; total_amount_bars].into_boxed_slice();
-        let cava_out = vec![0.0; total_amount_bars].into_boxed_slice();
 
         // process: calculate cutoff frequencies and eq
         let bass_cut_off = 100.;
         let treble_cut_off = 500.;
 
         // calculate frequency constant (used to distribute bars across the frequency band)
-        let frequency_constant = (self.freq_range.start as f32 / self.freq_range.end as f32)
+        let frequency_constant = (self.freq_range.start as f64 / self.freq_range.end as f64)
             .log10()
-            / (1. / (self.bars_per_channel as f32 + 1.) - 1.);
+            / (1. / (self.bars_per_channel as f64 + 1.) - 1.);
 
         let mut relative_cut_off = vec![0.; self.bars_per_channel + 1].into_boxed_slice();
         let mut bass_cut_off_bar = -1;
@@ -318,10 +306,10 @@ impl CavaBuilder {
         for n in 0..bars_per_channel + 1 {
             let mut bar_distribution_coefficient = -frequency_constant;
             bar_distribution_coefficient +=
-                (n as f32 + 1.) / (bars_per_channel as f32 + 1.) * frequency_constant;
+                (n as f64 + 1.) / (bars_per_channel as f64 + 1.) * frequency_constant;
 
             cut_off_frequency[n] =
-                self.freq_range.end as f32 * 10f32.powf(bar_distribution_coefficient);
+                self.freq_range.end as f64 * 10f64.powf(bar_distribution_coefficient);
 
             if n > 0 {
                 // what?
@@ -334,10 +322,10 @@ impl CavaBuilder {
                 }
             }
 
-            relative_cut_off[n] = cut_off_frequency[n] / (self.sample_rate as f32 / 2.);
+            relative_cut_off[n] = cut_off_frequency[n] / (self.sample_rate as f64 / 2.);
 
             // some random magic?
-            // eq[n] = cut_off_frequency[n].powf(1.);
+            eq[n] = cut_off_frequency[n].powf(1.);
             eq[n] /= 2f64.powf(29.);
             eq[n] /= (left.in_bass.len() as f64).log2();
 
@@ -398,7 +386,7 @@ impl CavaBuilder {
 
             if n > 0 {
                 if !first_bar {
-                    buffer_upper_cut_off[n - 1] = buffer_lower_cut_off[n] - 1;
+                    buffer_upper_cut_off[n - 1] = buffer_lower_cut_off[n].saturating_sub(1);
 
                     if buffer_lower_cut_off[n] <= buffer_lower_cut_off[n - 1] {
                         let mut room_for_more = false;
@@ -425,18 +413,18 @@ impl CavaBuilder {
 
                             // calculate new cut off frequency
                             if bar_buffer[n] == 1 {
-                                relative_cut_off[n] = buffer_lower_cut_off[n] as f32
-                                    / (left.in_bass.len() as f32 / 2.);
+                                relative_cut_off[n] = buffer_lower_cut_off[n] as f64
+                                    / (left.in_bass.len() as f64 / 2.);
                             } else if bar_buffer[n] == 2 {
-                                relative_cut_off[n] = buffer_lower_cut_off[n] as f32
-                                    / (left.in_mid.len() as f32 / 2.);
+                                relative_cut_off[n] = buffer_lower_cut_off[n] as f64
+                                    / (left.in_mid.len() as f64 / 2.);
                             } else if bar_buffer[n] == 3 {
-                                relative_cut_off[n] = buffer_lower_cut_off[n] as f32
-                                    / (left.in_treble.len() as f32 / 2.);
+                                relative_cut_off[n] = buffer_lower_cut_off[n] as f64
+                                    / (left.in_treble.len() as f64 / 2.);
                             }
 
                             cut_off_frequency[n] =
-                                relative_cut_off[n] * (self.sample_rate as f32 / 2.);
+                                relative_cut_off[n] * (self.sample_rate as f64 / 2.);
                         }
                     }
                 } else {
@@ -470,7 +458,6 @@ impl CavaBuilder {
             cava_fall,
             cava_mem,
             cava_peak,
-            cava_out,
             prev_cava_out,
         })
     }
@@ -532,4 +519,22 @@ fn compute_hann_window(buffer_size: usize) -> Box<[f64]> {
     }
 
     hann_window.into_boxed_slice()
+}
+
+#[cfg(test)]
+mod tests {
+    mod audio_data {
+        use crate::AudioData;
+
+        #[test]
+        fn buffer_size() {
+            let treble_buffer_size = 128 * 4;
+
+            let audio_data: AudioData<f32> = AudioData::new(treble_buffer_size);
+
+            assert_eq!(audio_data.in_bass.len(), treble_buffer_size * 8);
+            assert_eq!(audio_data.in_mid.len(), treble_buffer_size * 4);
+            assert_eq!(audio_data.in_treble.len(), treble_buffer_size);
+        }
+    }
 }
