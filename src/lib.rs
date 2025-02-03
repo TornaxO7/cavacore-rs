@@ -6,12 +6,11 @@ use std::sync::Arc;
 use bounded_integer::BoundedU32;
 use realfft::{num_complex::Complex, FftNum, RealFftPlanner, RealToComplex};
 
-pub use error::Error;
-
 mod builder;
 mod error;
 
 pub use builder::{CavaBuilder, DEFAULT_NOISE_REDUCTION};
+pub use error::Error;
 
 /// A helper type to restrict the sample rate within the given range.
 pub type SampleRate = BoundedU32<1, 384_000>;
