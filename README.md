@@ -1,31 +1,23 @@
-# Cava-rs
+# Cavacore-rs
 
-A rust wrapper for [cavacore].
-
-# Required dependencies
-
-- [`fftw3`]
+A rewrite in rust of [cavacore].
 
 # Example
 
 ```rs
-use cavacore::{Builder, Cavacore, Channel};
+use cavacore::{CavaBuilder, Cava, Channels};
 
-// Configure cava with the builder first...
-let builder = Builder {
-    // we will only listen to one channel
-    channel: Channel::Mono,
-    .. Builder::default()
-};
-
-let mut cava = builder.build().expect("Build cava");
+let mut cava = CavaBuilder::default()
+    .audio_channels(Channels::Mono)
+    .build()
+    .unwrap();
 
 // feed cava with some samples
 let mut new_samples: [f64; 3] = [1., 2., 3.];
+let mut bars = cava.make_output();
 
-// and let it give you the bars back
-let bars = cava.execute(&mut new_samples);
+// and let it give you the bars
+cava.execute(&new_samples, &mut bars);
 ```
 
 [cavacore]: https://github.com/karlstav/cava/blob/master/CAVACORE.md
-[fftw3]: http://www.fftw.org/
