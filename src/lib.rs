@@ -202,27 +202,31 @@ impl Cava {
         };
 
         let amount_channels = if self.right.is_some() { 2 } else { 1 };
-        for n in 0..self.bars_per_channel * amount_channels {
+        for (n, out) in output
+            .iter_mut()
+            .enumerate()
+            .take(self.bars_per_channel * amount_channels)
+        {
             // [smoothing]: falloff
-            if output[n] < self.prev_cava_out[n] && self.noise_reduction > 0.1 {
-                output[n] = self.cava_peak[n] * (1. - (self.cava_fall[n].powf(2.) * gravity_mod));
+            if *out < self.prev_cava_out[n] && self.noise_reduction > 0.1 {
+                *out = self.cava_peak[n] * (1. - (self.cava_fall[n].powf(2.) * gravity_mod));
 
-                if output[n] < 0.0 {
-                    output[n] = 0.0;
+                if *out < 0.0 {
+                    *out = 0.0;
                 }
                 self.cava_fall[n] += 0.028;
             } else {
-                self.cava_peak[n] = output[n];
+                self.cava_peak[n] = *out;
                 self.cava_fall[n] = 0.;
             }
-            self.prev_cava_out[n] = output[n];
+            self.prev_cava_out[n] = *out;
 
             // [smoothing]: integral
-            output[n] = self.cava_mem[n] * self.noise_reduction + output[n];
-            self.cava_mem[n] = output[n];
+            *out += self.cava_mem[n] * self.noise_reduction;
+            self.cava_mem[n] = *out;
             if self.enable_autosens {
                 // check if we overshoot target height
-                if output[n] > 1. {
+                if *out > 1. {
                     is_overshooting = true;
                 }
             }
@@ -399,11 +403,10 @@ impl CavaBuilder {
                             if buffer_lower_cut_off[n - 1] + 1 < left.in_mid.len() as u32 / 2 + 1 {
                                 room_for_more = true;
                             }
-                        } else if bar_buffer[n] == 3 {
-                            if buffer_lower_cut_off[n - 1] + 1 < left.in_treble.len() as u32 / 2 + 1
-                            {
-                                room_for_more = true;
-                            }
+                        } else if bar_buffer[n] == 3
+                            && buffer_lower_cut_off[n - 1] + 1 < left.in_treble.len() as u32 / 2 + 1
+                        {
+                            room_for_more = true;
                         }
 
                         if room_for_more {
@@ -427,10 +430,8 @@ impl CavaBuilder {
                                 relative_cut_off[n] * (self.sample_rate as f64 / 2.);
                         }
                     }
-                } else {
-                    if buffer_upper_cut_off[n - 1] <= buffer_lower_cut_off[n - 1] {
-                        buffer_upper_cut_off[n - 1] = buffer_lower_cut_off[n - 1] + 1;
-                    }
+                } else if buffer_upper_cut_off[n - 1] <= buffer_lower_cut_off[n - 1] {
+                    buffer_upper_cut_off[n - 1] = buffer_lower_cut_off[n - 1] + 1;
                 }
             }
         }

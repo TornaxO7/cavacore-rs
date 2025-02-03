@@ -84,7 +84,7 @@ impl CavaBuilder {
             });
         }
 
-        if errors.len() > 0 {
+        if !errors.is_empty() {
             return Err(errors);
         }
 
@@ -92,14 +92,20 @@ impl CavaBuilder {
     }
 
     pub(crate) fn compute_treble_buffer_size(&self) -> usize {
-        let factor = match self.sample_rate {
-            ..=08_125 => 1,
-            ..=16_250 => 2,
-            ..=32_500 => 4,
-            ..=75_000 => 8,
-            ..=150_000 => 16,
-            ..=300_000 => 32,
-            _ => 64,
+        let factor = if self.sample_rate < 8_125 {
+            1
+        } else if self.sample_rate < 16_250 {
+            2
+        } else if self.sample_rate < 32_500 {
+            4
+        } else if self.sample_rate < 75_000 {
+            8
+        } else if self.sample_rate < 150_000 {
+            16
+        } else if self.sample_rate < 300_000 {
+            32
+        } else {
+            64
         };
 
         factor * 128
@@ -136,7 +142,7 @@ mod tests {
         let mut builder = CavaBuilder::default();
         builder = builder.sample_rate(SampleRate::new(8_125).unwrap());
 
-        assert_eq!(128 * 1, builder.compute_treble_buffer_size());
+        assert_eq!(128, builder.compute_treble_buffer_size());
 
         builder = builder.sample_rate(SampleRate::new(16_250).unwrap());
         assert_eq!(128 * 2, builder.compute_treble_buffer_size());
