@@ -12,8 +12,8 @@ use init::compute_hann_window;
 use realfft::{num_complex::Complex, FftNum, RealFftPlanner, RealToComplex};
 
 mod error;
-mod init;
-mod setter;
+pub mod init;
+pub mod setter;
 
 pub use error::Error;
 

@@ -21,17 +21,39 @@ fn blueprint() {
     .unwrap();
 
     test_cava(&mut cava);
-    println!("Default cava works.");
+}
 
-    // after changing values, nothing should change
+#[test]
+fn blueprint_with_set_bars() {
+    let mut cava = Cava::new(CavaOpts {
+        bars_per_channel: NonZeroUsize::new(2).unwrap(),
+        audio_channels: cavacore::Channels::Stereo,
+        sample_rate: SampleRate::new(SAMPLE_RATE).unwrap(),
+        noise_reduction: 0.77,
+        frequency_range: NonZeroU32::new(50).unwrap()..NonZeroU32::new(10_000).unwrap(),
+        ..Default::default()
+    })
+    .unwrap();
+
     cava.set_bars(BARS_PER_CHANNEL).unwrap();
     test_cava(&mut cava);
-    println!("After `set_bars` works.");
+}
+
+#[test]
+fn blueprint_with_set_sample_rate() {
+    let mut cava = Cava::new(CavaOpts {
+        bars_per_channel: BARS_PER_CHANNEL,
+        audio_channels: cavacore::Channels::Stereo,
+        sample_rate: SampleRate::new(300_000).unwrap(),
+        noise_reduction: 0.77,
+        frequency_range: NonZeroU32::new(50).unwrap()..NonZeroU32::new(10_000).unwrap(),
+        ..Default::default()
+    })
+    .unwrap();
 
     cava.set_sample_rate(SampleRate::new(SAMPLE_RATE).unwrap())
         .unwrap();
     test_cava(&mut cava);
-    println!("After `set_sample_rate` works.");
 }
 
 fn test_cava(cava: &mut Cava) {
