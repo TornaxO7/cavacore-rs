@@ -5,11 +5,11 @@ use std::{
 
 use cavacore::{Cava, CavaOpts, SampleRate};
 
+const SAMPLE_RATE: u32 = 44_100;
+const BARS_PER_CHANNEL: NonZeroUsize = NonZeroUsize::new(10).unwrap();
+
 #[test]
 fn blueprint() {
-    const SAMPLE_RATE: u32 = 44_100;
-    const BARS_PER_CHANNEL: NonZeroUsize = NonZeroUsize::new(10).unwrap();
-
     let mut cava = Cava::new(CavaOpts {
         bars_per_channel: BARS_PER_CHANNEL,
         audio_channels: cavacore::Channels::Stereo,
@@ -20,6 +20,21 @@ fn blueprint() {
     })
     .unwrap();
 
+    test_cava(&mut cava);
+    println!("Default cava works.");
+
+    // after changing values, nothing should change
+    cava.set_bars(BARS_PER_CHANNEL).unwrap();
+    test_cava(&mut cava);
+    println!("After `set_bars` works.");
+
+    cava.set_sample_rate(SampleRate::new(SAMPLE_RATE).unwrap())
+        .unwrap();
+    test_cava(&mut cava);
+    println!("After `set_sample_rate` works.");
+}
+
+fn test_cava(cava: &mut Cava) {
     let blueprint_2000_mhz = [0., 0., 0., 0., 0., 0., 0.493, 0.446, 0., 0.];
     let blueprint_200_mhz = [0., 0., 0.978, 0.008, 0., 0.001, 0., 0., 0., 0.];
 

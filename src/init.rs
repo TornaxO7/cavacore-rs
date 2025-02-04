@@ -78,18 +78,17 @@ impl Cava {
         let mid_hann_window = compute_hann_window(left.in_mid.len());
         let treble_hann_window = compute_hann_window(left.in_treble.len());
 
-        let input_buffer =
-            vec![0.0; left.in_bass.len() * audio_channels as usize].into_boxed_slice();
+        let input_buffer = vec![0.0; left.in_bass.len() * audio_channels as usize];
 
         let buffer_lower_cut_off = vec![0; bars_per_channel_usize + 1];
         let buffer_upper_cut_off = vec![0; bars_per_channel_usize + 1];
         let eq = vec![0.; bars_per_channel_usize + 1];
 
         let total_amount_bars = bars_per_channel_usize * audio_channels as usize;
-        let cava_fall = vec![0.0; total_amount_bars].into_boxed_slice();
-        let cava_mem = vec![0.0; total_amount_bars].into_boxed_slice();
-        let cava_peak = vec![0.0; total_amount_bars].into_boxed_slice();
-        let prev_cava_out = vec![0.0; total_amount_bars].into_boxed_slice();
+        let cava_fall = vec![0.0; total_amount_bars];
+        let cava_mem = vec![0.0; total_amount_bars];
+        let cava_peak = vec![0.0; total_amount_bars];
+        let prev_cava_out = vec![0.0; total_amount_bars];
 
         let bass_cut_off_bar = -1;
         let treble_cut_off_bar = -1;
@@ -121,7 +120,8 @@ impl Cava {
             prev_cava_out,
         };
 
-        cava.set_bars(bars_per_channel).unwrap();
+        // write values into the buffers
+        cava.update_state();
         cava
     }
 
@@ -146,7 +146,7 @@ impl Cava {
     }
 }
 
-fn compute_hann_window(buffer_size: usize) -> Box<[f64]> {
+pub(crate) fn compute_hann_window(buffer_size: usize) -> Box<[f64]> {
     let mut hann_window = Vec::with_capacity(buffer_size);
 
     for i in 0..buffer_size {
