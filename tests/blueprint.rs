@@ -3,21 +3,22 @@ use std::{
     num::{NonZeroU32, NonZeroUsize},
 };
 
-use cavacore::{CavaBuilder, SampleRate};
+use cavacore::{Cava, CavaOpts, SampleRate};
 
 #[test]
 fn blueprint() {
     const SAMPLE_RATE: u32 = 44_100;
     const BARS_PER_CHANNEL: NonZeroUsize = NonZeroUsize::new(10).unwrap();
 
-    let mut cava = CavaBuilder::default()
-        .bars_per_channel(BARS_PER_CHANNEL)
-        .audio_channels(cavacore::Channels::Stereo)
-        .sample_rate(SampleRate::new(SAMPLE_RATE).unwrap())
-        .noise_reduction(0.77)
-        .frequency_range(NonZeroU32::new(50).unwrap()..NonZeroU32::new(10_000).unwrap())
-        .build()
-        .unwrap();
+    let mut cava = Cava::new(CavaOpts {
+        bars_per_channel: BARS_PER_CHANNEL,
+        audio_channels: cavacore::Channels::Stereo,
+        sample_rate: SampleRate::new(SAMPLE_RATE).unwrap(),
+        noise_reduction: 0.77,
+        frequency_range: NonZeroU32::new(50).unwrap()..NonZeroU32::new(10_000).unwrap(),
+        ..Default::default()
+    })
+    .unwrap();
 
     let blueprint_2000_mhz = [0., 0., 0., 0., 0., 0., 0.493, 0.446, 0., 0.];
     let blueprint_200_mhz = [0., 0., 0.978, 0.008, 0., 0.001, 0., 0., 0., 0.];

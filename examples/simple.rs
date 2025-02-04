@@ -1,10 +1,3 @@
-# Cavacore-rs
-
-A rewrite in rust of [cavacore].
-
-# Example
-
-```rs
 use std::num::NonZeroUsize;
 
 use cavacore::{Cava, CavaOpts, SampleRate};
@@ -26,6 +19,3 @@ fn main() {
     // you can also change some values afterwards
     cava.set_bars(NonZeroUsize::new(10).unwrap()).unwrap();
 }
-```
-
-[cavacore]: https://github.com/karlstav/cava/blob/master/CAVACORE.md
